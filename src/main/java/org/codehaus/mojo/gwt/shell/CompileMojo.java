@@ -23,8 +23,6 @@ package org.codehaus.mojo.gwt.shell;
  *
  */
 
-import static org.apache.maven.artifact.Artifact.SCOPE_COMPILE;
-
 import java.io.File;
 import java.util.Collection;
 import java.util.HashSet;
@@ -35,7 +33,7 @@ import org.apache.maven.artifact.Artifact;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.codehaus.mojo.gwt.GwtModule;
-import org.codehaus.mojo.gwt.utils.DefaultGwtModuleReader;
+import org.codehaus.mojo.gwt.smartstalechecker.SmartStaleCheck;
 import org.codehaus.mojo.gwt.utils.GwtModuleReaderException;
 import org.codehaus.plexus.compiler.util.scan.InclusionScanException;
 import org.codehaus.plexus.compiler.util.scan.StaleSourceScanner;
@@ -77,11 +75,11 @@ public class CompileMojo
     /**
      * On GWT 1.6+, number of parallel processes used to compile GWT premutations. Defaults to
      * platform available processors number.
-     * 
+     *
      * <p>
      * Can be unset from command line using '-Dgwt.compiler.localWorkers=n'.
      * </p>
-     * 
+     *
      * @parameter expression="${gwt.compiler.localWorkers}"
      */
     private int localWorkers;
@@ -169,7 +167,7 @@ public class CompileMojo
      * @parameter
      */
     private File workDir;
-    
+
     /**
      * add -extra parameter to the compiler command line
      * <p>
@@ -179,7 +177,7 @@ public class CompileMojo
      * @since 2.1.0-1
      */
     private boolean extraParam;
-    
+
     /**
      * add -compileReport parameter to the compiler command line
      * <p>
@@ -187,9 +185,9 @@ public class CompileMojo
      * </p>
      * @parameter default-value="false" expression="${gwt.compiler.compileReport}"
      * @since 2.1.0-1
-     */    
+     */
     private boolean compileReport;
-    
+
     /**
      * add -optimize parameter to the compiler command line the value must be between 0 and 9
      * by default -1 so no arg to the compiler
@@ -198,9 +196,9 @@ public class CompileMojo
      * </p>
      * @parameter default-value="-1" expression="${gwt.compiler.optimizationLevel}"
      * @since 2.1.0-1
-     */    
-    private int optimizationLevel;    
-    
+     */
+    private int optimizationLevel;
+
     /**
      * add -XsoycDetailed parameter to the compiler command line
      * <p>
@@ -208,21 +206,21 @@ public class CompileMojo
      * </p>
      * @parameter default-value="false" expression="${gwt.compiler.soycDetailed}"
      * @since 2.1.0-1
-     */    
-    private boolean soycDetailed;    
-    
-    
+     */
+    private boolean soycDetailed;
+
+
     /**
      * add -strict parameter to the compiler command line
-     * 
+     *
      * <p>
      * Can be set from command line using '-Dgwt.compiler.strict=true'.
      * </p>
      * @parameter default-value="false" expression="${gwt.compiler.strict}"
      * @since 2.1.0-1
-     */    
-    private boolean strict;     
-    
+     */
+    private boolean strict;
+
     /**
      * EXPERIMENTAL: add -XenableClosureCompiler parameter to the compiler command line
      * <p>
@@ -263,6 +261,12 @@ public class CompileMojo
      */
     private int fragmentCount;
 
+    /**
+     * @parameter
+     */
+    private SmartStaleCheck.Builder smartStaleCheck;
+
+    @Override
     public void doExecute( )
         throws MojoExecutionException, MojoFailureException
     {
@@ -280,12 +284,12 @@ public class CompileMojo
         compile( getModules() );
     }
 
-    private void compile( String[] modules )
+    private void compile( final String[] modules )
         throws MojoExecutionException
     {
         boolean upToDate = true;
 
-        JavaCommand cmd = new JavaCommand( "com.google.gwt.dev.Compiler" );
+        final JavaCommand cmd = new JavaCommand( "com.google.gwt.dev.Compiler" );
         if ( gwtSdkFirstInClasspath )
         {
             cmd.withinClasspath( getGwtUserJar() )
@@ -351,9 +355,15 @@ public class CompileMojo
             cmd.arg( "-workDir" ).arg( String.valueOf( workDir ) );
         }
 
-        for ( String target : modules )
+        final SmartStaleCheck smartStaleCheck = createSmartStaleCheck();
+
+        for ( final String target : modules )
         {
-            if ( !compilationRequired( target, getOutputDirectory() ) )
+            if (smartStaleCheck.isEnabled())
+            {
+                smartStaleCheck.compilationRequired(target, getOutputDirectory());
+            }
+            else if ( !compilationRequired( target, getOutputDirectory() ) )
             {
                 continue;
             }
@@ -363,6 +373,26 @@ public class CompileMojo
         if ( !upToDate )
         {
             cmd.execute();
+        }
+    }
+
+    private SmartStaleCheck createSmartStaleCheck()
+    {
+        return createSmartStaleCheckBuilder()
+                .sourceDirectories(getProject().getCompileSourceRoots())
+                // TODO: set classpath
+                .build();
+    }
+
+    private SmartStaleCheck.Builder createSmartStaleCheckBuilder()
+    {
+        if (smartStaleCheck != null)
+        {
+            return smartStaleCheck;
+        }
+        else
+        {
+            return new SmartStaleCheck.Builder();
         }
     }
 
@@ -376,7 +406,7 @@ public class CompileMojo
         // @see http://code.google.com/p/google-web-toolkit/issues/detail?id=4031
         if ( System.getProperty( "java.vendor" ).startsWith( "IBM" ) && StringUtils.isEmpty(getJvm()))
         {
-            StringBuilder sb = new StringBuilder( "Build is using IBM JDK, and no explicit JVM property has been set." );
+            final StringBuilder sb = new StringBuilder( "Build is using IBM JDK, and no explicit JVM property has been set." );
             sb.append( SystemUtils.LINE_SEPARATOR );
             sb.append("localWorkers set to 1 as a workaround");
             sb.append( SystemUtils.LINE_SEPARATOR );
@@ -398,14 +428,14 @@ public class CompileMojo
      * @throws MojoExecutionException When sources scanning fails
      * @author Alexander Gordt
      */
-    private boolean compilationRequired( String module, File output )
+    private boolean compilationRequired( final String module, final File output )
         throws MojoExecutionException
     {
         getLog().debug( "**Checking if compilation is required for " + module );
         try
         {
 
-        	GwtModule gwtModule = readModule( module );
+        	final GwtModule gwtModule = readModule( module );
             if ( gwtModule.getEntryPoints().size() == 0 )
             {
                 getLog().info( gwtModule.getName() + " has no EntryPoint - compilation skipped" );
@@ -420,26 +450,26 @@ public class CompileMojo
                 return true;
             }
             getLog().debug( "Compilation not forced");
-            
-            String modulePath = gwtModule.getPath();
 
-            String outputTarget = modulePath + "/" + modulePath + ".nocache.js";
-            File outputTargetFile = new File( output, outputTarget );
+            final String modulePath = gwtModule.getPath();
+
+            final String outputTarget = modulePath + "/" + modulePath + ".nocache.js";
+            final File outputTargetFile = new File( output, outputTarget );
             // Require compilation if no js file present in target.
             if ( !outputTargetFile.exists() )
             {
                 return true;
             }
             getLog().debug( "Output file exists");
-            
-            File moduleFile = gwtModule.getSourceFile();
+
+            final File moduleFile = gwtModule.getSourceFile();
             if(moduleFile == null) {
             	return true; //the module was read from something like an InputStream; always recompile this because we can't make any other choice
             }
             getLog().debug( "There is a module source file (not an input stream");
-            
+
             //If input is newer than target, recompile
-            if(moduleFile.lastModified() > outputTargetFile.lastModified()) 
+            if(moduleFile.lastModified() > outputTargetFile.lastModified())
             {
                 getLog().debug( "Module file has been modified since the output file was created; recompiling" );
             	return true;
@@ -447,27 +477,27 @@ public class CompileMojo
             getLog().debug( "The module XML hasn't been updated");
 
             // js file already exists, but may not be up-to-date with project source files
-            SingleTargetSourceMapping singleTargetMapping = new SingleTargetSourceMapping( ".java", outputTarget );
-            StaleSourceScanner scanner = new StaleSourceScanner();
+            final SingleTargetSourceMapping singleTargetMapping = new SingleTargetSourceMapping( ".java", outputTarget );
+            final StaleSourceScanner scanner = new StaleSourceScanner();
             scanner.addSourceMapping( singleTargetMapping );
 
-            SingleTargetSourceMapping uiBinderMapping = new SingleTargetSourceMapping( ".ui.xml", outputTarget );
+            final SingleTargetSourceMapping uiBinderMapping = new SingleTargetSourceMapping( ".ui.xml", outputTarget );
             scanner.addSourceMapping( uiBinderMapping );
 
-            Collection<File> compileSourceRoots = new HashSet<File>();
-           	for (Iterator iterator = getProject().getCompileSourceRoots().iterator(); iterator.hasNext();) {	
-				String sourceRoot = (String) iterator.next();
-           		for (String sourcePackage : gwtModule.getSources()) {
-			        String packagePath = gwtModule.getPackage().replace( '.', File.separatorChar );
-		            File sourceDirectory = new File (sourceRoot + File.separatorChar + packagePath + File.separator + sourcePackage);
+            final Collection<File> compileSourceRoots = new HashSet<File>();
+           	for (final Iterator iterator = getProject().getCompileSourceRoots().iterator(); iterator.hasNext();) {
+				final String sourceRoot = (String) iterator.next();
+           		for (final String sourcePackage : gwtModule.getSources()) {
+			        final String packagePath = gwtModule.getPackage().replace( '.', File.separatorChar );
+		            final File sourceDirectory = new File (sourceRoot + File.separatorChar + packagePath + File.separator + sourcePackage);
 		            if(sourceDirectory.exists()) {
 		            	getLog().debug(" Looking in a source directory "+sourceDirectory.getAbsolutePath() + " for possible changes");
-			            compileSourceRoots.add(sourceDirectory);					
+			            compileSourceRoots.add(sourceDirectory);
 		            }
 				}
 			}
 
-            for ( File sourceRoot : compileSourceRoots )
+            for ( final File sourceRoot : compileSourceRoots )
             {
                 if ( !sourceRoot.isDirectory() )
                 {
@@ -481,7 +511,7 @@ public class CompileMojo
                         return true;
                     }
                 }
-                catch ( InclusionScanException e )
+                catch ( final InclusionScanException e )
                 {
                     throw new MojoExecutionException( "Error scanning source root: \'" + sourceRoot + "\' "
                         + "for stale files to recompile.", e );
@@ -490,7 +520,7 @@ public class CompileMojo
             getLog().info( module + " is up to date. GWT compilation skipped" );
             return false;
         }
-        catch ( GwtModuleReaderException e )
+        catch ( final GwtModuleReaderException e )
         {
             throw new MojoExecutionException( e.getMessage(), e );
         }
