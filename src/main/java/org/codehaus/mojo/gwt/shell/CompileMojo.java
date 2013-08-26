@@ -24,21 +24,25 @@ package org.codehaus.mojo.gwt.shell;
  */
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 
 import org.apache.commons.lang.SystemUtils;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.codehaus.mojo.gwt.GwtModule;
-import org.codehaus.mojo.gwt.smartstalechecker.SmartStaleCheck;
 import org.codehaus.mojo.gwt.utils.GwtModuleReaderException;
 import org.codehaus.plexus.compiler.util.scan.InclusionScanException;
 import org.codehaus.plexus.compiler.util.scan.StaleSourceScanner;
 import org.codehaus.plexus.compiler.util.scan.mapping.SingleTargetSourceMapping;
 import org.codehaus.plexus.util.StringUtils;
+
+import com.github.htfv.gwt.smartstalecheck.SmartStaleCheck;
 
 /**
  * Invokes the GWTCompiler for the project source.
@@ -361,7 +365,10 @@ public class CompileMojo
         {
             if (smartStaleCheck.isEnabled())
             {
-                smartStaleCheck.compilationRequired(target, getOutputDirectory());
+                if ( !smartStaleCheck.compilationRequired(target) )
+            	{
+            		continue;
+            	}
             }
             else if ( !compilationRequired( target, getOutputDirectory() ) )
             {
@@ -376,11 +383,12 @@ public class CompileMojo
         }
     }
 
-    private SmartStaleCheck createSmartStaleCheck()
+    private SmartStaleCheck createSmartStaleCheck() throws MojoExecutionException
     {
         return createSmartStaleCheckBuilder()
+        		.classpath(getClasspath())
+        		.outputDirectory(getOutputDirectory())
                 .sourceDirectories(getProject().getCompileSourceRoots())
-                // TODO: set classpath
                 .build();
     }
 
@@ -394,6 +402,27 @@ public class CompileMojo
         {
             return new SmartStaleCheck.Builder();
         }
+    }
+    
+    private List<File> getClasspath() throws MojoExecutionException
+    {
+    	List<File> classpath = new ArrayList<File>();
+
+        if ( gwtSdkFirstInClasspath )
+        {
+        	classpath.addAll( Arrays.asList( getGwtUserJar() ) );
+        	classpath.add( getGwtDevJar() );
+        }
+
+        classpath.addAll( getClasspath( Artifact.SCOPE_COMPILE ));
+
+        if ( !gwtSdkFirstInClasspath )
+        {
+            classpath.addAll( Arrays.asList( getGwtUserJar() ) );
+            classpath.add( getGwtDevJar() );
+        }
+
+        return classpath;
     }
 
     private int getLocalWorkers()
